@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Apr 20 20:20:20 2023
+
+@author: kartiksahu
+"""
+
+import hashlib
+import itertools
+import binascii
+import random
+
+def rc4(key, data):
+    """
+    RC4 encryption/decryption algorithm.
+    """
+    S = list(range(256))
+    j = 0
+    out = []
+
+    # Key-scheduling algorithm (KSA)
+    for i in range(256):
+        j = (j + S[i] + key[i % len(key)]) % 256
+        S[i], S[j] = S[j], S[i]
+
+    # Pseudo-random generation algorithm (PRGA)
+    i = j = 0
+    for char in data:
+        i = (i + 1) % 256
+        j = (j + S[i]) % 256
+        S[i], S[j] = S[j], S[i]
+        out.append(char ^ S[(S[i] + S[j]) % 256])
+
+    return bytes(out)
+
+def wep_encrypt(key, data):
+    """
+    WEP encryption using RC4 and a random 24-bit IV.
+    """
+    iv = bytes(random.getrandbits(8) for _ in range(3))
+    extended_key = iv + key
+    ciphertext = rc4(extended_key, data)
+    return iv + ciphertext
+
+def wep_decrypt(key, encrypted_data):
+    """
+    WEP decryption using RC4.
+    """
+    iv = encrypted_data[:3]
+    ciphertext = encrypted_data[3:]
+    extended_key = iv + key
+    return rc4(extended_key, ciphertext)
+
+def fms_attack(ciphertexts, known_prefix, key_length=5):
+    """
+    FMS attack on WEP encryption.
+    """
+    N = 256
+    key = bytearray(key_length)
+    votes = [0] * key_length
+
+    # Iterate through each byte of the key
+    for key_byte in range(key_length):
+        votes = [0] * N
+        for iv, ciphertext in ciphertexts:
+            S = list(range(N))
+            extended_key = iv + key
+            K = key_byte + 3
+
+            j = 0  # Initialize j before the RC4 key setup
+
+            # RC4 key setup
+            for i in range(K):
+                j = (j + S[i] + extended_key[i % len(extended_key)]) % N
+                S[i], S[j] = S[j], S[i]
+
+            # Exploit the weak key property
+            for i in range(N):
+                if S[(S[i] + S[(S[i] + 1) % N]) % N] == known_prefix[key_byte]:
+                    votes[i] += 1
+
+        key[key_byte] = max(range(N), key=lambda x: votes[x])
+
+    return bytes(key)
+
+def main():
+    key = b'\x01\x02\x03\x04\x05'
+    data = b'This is a test message.'
+    known_prefix = b'\xAA\xAA\x03\x00\x00\x00'
+
+    # Simulate WEP encryption and collect ciphertexts
+    ciphertexts = []
+    for _ in range(100000):
+        encrypted_data = wep_encrypt(key, data)
+        iv = encrypted_data[:3]
+        ciphertext = encrypted_data[3:]
+        ciphertexts.append((iv, ciphertext))
+
+    # Perform the FMS attack
+    recovered_key = fms_attack(ciphertexts, known_prefix)
+    print("Recovered key:", binascii.hexlify(recovered_key))
+
+    # Decrypt a message using the recovered key
+    decrypted_data = wep_decrypt(recovered_key, encrypted_data)
+    print("Decrypted message:", decrypted_data)
+
+if __name__ == "__main__":
+    main()
